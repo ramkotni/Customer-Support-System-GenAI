@@ -76,7 +76,8 @@ export function PromptBar({ onSend, onStop, isStreaming, focusKey }: Props) {
       </form>
 
       <p className="promptbar__hint">
-        Enter to send · Shift+Enter for a new line · responses are mock data in Phase 1
+        Enter to send · Shift+Enter for a new line · answers come from a placeholder
+        responder until the agent ships
       </p>
     </div>
   );

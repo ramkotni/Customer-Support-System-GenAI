@@ -1,12 +1,14 @@
 import { useMemo } from 'react';
-import type { Conversation } from '../types';
+import type { ConversationSummary } from '../types';
 import { dateBucket } from '../lib/format';
 import { PlusIcon, TrashIcon } from './Icons';
 
 interface Props {
-  conversations: Conversation[];
+  conversations: ConversationSummary[];
   activeId: string | null;
   open: boolean;
+  loading: boolean;
+  error: string | null;
   onNew: () => void;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -17,6 +19,8 @@ export function Sidebar({
   conversations,
   activeId,
   open,
+  loading,
+  error,
   onNew,
   onSelect,
   onDelete,
@@ -24,7 +28,7 @@ export function Sidebar({
 }: Props) {
   // Group by recency; conversations arrive already sorted newest-first.
   const groups = useMemo(() => {
-    const map = new Map<string, Conversation[]>();
+    const map = new Map<string, ConversationSummary[]>();
     for (const c of conversations) {
       const key = dateBucket(c.updatedAt);
       const list = map.get(key);
@@ -44,7 +48,17 @@ export function Sidebar({
       </div>
 
       <nav className="sidebar__list">
-        {groups.length === 0 && <p className="sidebar__empty">No conversations yet.</p>}
+        {error && (
+          <p className="sidebar__error" role="status">
+            {error}
+          </p>
+        )}
+
+        {!error && loading && <p className="sidebar__empty">Loading history…</p>}
+
+        {!error && !loading && groups.length === 0 && (
+          <p className="sidebar__empty">No conversations yet.</p>
+        )}
 
         {groups.map(([label, items]) => (
           <section key={label} className="sidebar__group">
@@ -61,7 +75,7 @@ export function Sidebar({
                         const next = window.prompt('Rename conversation', c.title);
                         if (next !== null) onRename(c.id, next);
                       }}
-                      title={`${c.title}\n${c.id} · ${c.turns.length} turn${c.turns.length === 1 ? '' : 's'}`}
+                      title={`${c.title}\n${c.id} · ${c.turnCount} turn${c.turnCount === 1 ? '' : 's'}`}
                       aria-current={c.id === activeId ? 'page' : undefined}
                     >
                       <span className="conv__title">{c.title}</span>
@@ -85,7 +99,7 @@ export function Sidebar({
       </nav>
 
       <footer className="sidebar__foot">
-        <span className="badge">Phase 1 · mock data</span>
+        <span className="badge">Phase 2 · live API</span>
       </footer>
     </aside>
   );

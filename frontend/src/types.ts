@@ -1,11 +1,11 @@
 /**
- * Core conversation data model.
+ * Core conversation data model — mirrors the backend contract in
+ * `app/schemas/conversation.py`:
  *
- * Shape is deliberately the one the agent harness (Phase 3) will receive:
  *   Conversation -> ordered Turn[] -> { human: Message, ai: Message | null }
  *
- * Every Conversation and every Message carries its own id so a turn can be
- * referenced, retried or cited later (e.g. tool traces, feedback, ticket links).
+ * All ids are minted by the server (`conv_`/`turn_`/`msg_` prefixes) so a turn
+ * can be referenced, retried or cited later (tool traces, tickets, feedback).
  */
 
 export type Role = 'human' | 'ai';
@@ -44,9 +44,9 @@ export interface Turn {
 }
 
 export interface Conversation {
-  /** Unique Conversation ID, e.g. "conv_7d4e0f11". */
+  /** Server-assigned Conversation ID, e.g. "conv_7d4e0f11a2b3". */
   id: string;
-  /** Auto-generated from the user's first question. */
+  /** Derived server-side from the user's first question. */
   title: string;
   createdAt: string;
   updatedAt: string;
@@ -54,19 +54,11 @@ export interface Conversation {
   turns: Turn[];
 }
 
-/* ---------- The payload handed to the agent (Phase 3 contract) ---------- */
-
-export interface AgentContextMessage {
-  role: Role;
-  content: string;
-  messageId: string;
-}
-
-export interface AgentRequest {
-  conversationId: string;
-  /** The new question being asked now. */
-  question: string;
-  messageId: string;
-  /** Prior turns, flattened oldest -> newest. Excludes the new question. */
-  history: AgentContextMessage[];
+/** Sidebar row: no transcript, so listing stays cheap. */
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  turnCount: number;
 }

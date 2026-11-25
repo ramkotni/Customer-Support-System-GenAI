@@ -14,11 +14,14 @@ from app.core.security import (
     ensure_owns_customer,
 )
 from app.db.session import get_session
+from app.repositories.conversations_repo import ConversationsRepository
 from app.repositories.customers_repo import CustomersRepository
 from app.repositories.orders_repo import OrdersRepository
 from app.repositories.products_repo import ProductsRepository
 from app.repositories.resolutions_repo import ResolutionsRepository
 from app.repositories.support_repo import SupportRepository
+from app.services.chat_responder import ChatResponder, StubChatResponder
+from app.services.conversation_service import ConversationService
 from app.services.customer_service import CustomerService
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
@@ -45,6 +48,26 @@ CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
 
 
 # --------------------------- service factories ---------------------------
+def get_chat_responder() -> ChatResponder:
+    """The chat reply generator.
+
+    PHASE 3: swap ``StubChatResponder`` for the agent harness here. It is the
+    only line that needs to change — the responder is a one-method protocol
+    (see app/services/chat_responder.py) and everything downstream, including
+    the SSE transport and the frontend, already consumes it.
+    """
+    return StubChatResponder()
+
+
+ChatResponderDep = Annotated[ChatResponder, Depends(get_chat_responder)]
+
+
+def get_conversation_service(
+    db: DbSession, responder: ChatResponderDep
+) -> ConversationService:
+    return ConversationService(ConversationsRepository(db), responder)
+
+
 def get_customer_service(db: DbSession) -> CustomerService:
     return CustomerService(CustomersRepository(db))
 
@@ -68,6 +91,7 @@ def get_ticket_service(db: DbSession) -> TicketService:
     return TicketService(SupportRepository(db), OrdersRepository(db))
 
 
+ConversationSvc = Annotated[ConversationService, Depends(get_conversation_service)]
 CustomerSvc = Annotated[CustomerService, Depends(get_customer_service)]
 OrderSvc = Annotated[OrderService, Depends(get_order_service)]
 ProductSvc = Annotated[ProductService, Depends(get_product_service)]
@@ -95,3 +119,21 @@ async def ensure_customer_access(customer_id: int, principal: CurrentPrincipal) 
 
 
 CustomerAccess = Annotated[int, Depends(ensure_customer_access)]
+
+
+async def require_customer_scope(principal: CurrentPrincipal) -> int:
+    """The effective customer id, or a 422 if the caller sent no scope.
+
+    Conversations are per-customer, so `X-Customer-Id` is mandatory for them —
+    the same rule the tickets API applies.
+    """
+    from app.core.exceptions import ValidationError
+    if principal.customer_id is None:
+        raise ValidationError(
+            "A customer scope (X-Customer-Id) is required for conversations.",
+            code="customer_scope_required",
+        )
+    return principal.customer_id
+
+
+ScopedCustomer = Annotated[int, Depends(require_customer_scope)]

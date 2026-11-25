@@ -1,14 +1,22 @@
 # Customer Support API — Category 1: Tool APIs (FastAPI)
 
 Production-grade, API-driven backend for the Agentic Customer Support System.
-This is **Category 1 — the Tool APIs**: secure, mostly read-only REST endpoints
-over the commerce database that the support agent (Category 2, a later phase)
-will consume as tools. The agent never touches the database; it will go through
-exactly these endpoints.
+It serves two surfaces from one FastAPI app:
+
+1. **Category 1 — the Tool APIs**: secure, mostly read-only REST endpoints over
+   the commerce database that the support agent (Category 2, a later phase) will
+   consume as tools. The agent never touches the database; it goes through
+   exactly these endpoints.
+2. **The conversation APIs**: the chat transcript the support UI reads and
+   writes — conversations, turns, messages, and a streaming (SSE) answer
+   endpoint. Answers currently come from a **placeholder responder**
+   (`app/services/chat_responder.py`); the agent harness replaces it without
+   changing the HTTP contract.
 
 - **Knowledge base**: `_KB/` (82 Markdown policy articles) — built.
 - **Commerce DB**: `_DB/ecommerce.db` (SQLite, 34 tables + 7 policy views) — built & seeded.
-- **This component**: the FastAPI layer in `app/`.
+- **Backend**: the FastAPI layer in `app/`.
+- **Frontend**: the React chat UI in `frontend/` — see `frontend/README.md`.
 
 > The policy views in the DB (`v_refund_eligibility`, `v_delivery_status`, …)
 > encode the business rules once; the API reads them so the API and the KB can
@@ -99,6 +107,53 @@ endpoints additionally require the caller to be authorized for that customer
 | GET | `/tickets/{ticket_number}` | Retrieve a ticket + messages |
 
 Interactive docs: **`/docs`** (Swagger) and **`/redoc`**. Liveness: **`/health`**.
+
+### Conversations (chat UI)
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/conversations` | Open a conversation (optional `firstMessage` titles it) |
+| GET | `/conversations` | Conversation history for the sidebar (paginated) |
+| GET | `/conversations/{conversation_id}` | Full transcript (ordered turns) |
+| PATCH | `/conversations/{conversation_id}` | Rename |
+| DELETE | `/conversations/{conversation_id}` | Delete (turns + messages cascade) |
+| GET | `/conversations/{conversation_id}/messages` | Flat message list (paginated) |
+| POST | `/conversations/{conversation_id}/messages` | Ask; waits for the whole answer |
+| POST | `/conversations/{conversation_id}/messages/stream` | Ask; **streams** the answer (SSE) |
+| DELETE | `/conversations/{conversation_id}/turns/{turn_id}` | Drop a turn (powers the UI's Retry) |
+
+A conversation is always owned by a customer, so these require `X-Customer-Id`
+(422 `customer_scope_required` without it) and enforce ownership like the order
+endpoints: 404 for a conversation that doesn't exist, 403 for someone else's.
+
+Unlike the rest of the API, these responses are **camelCase**, because the only
+consumer is the TypeScript frontend. Input accepts either spelling.
+
+#### Data model
+```
+Conversation (conv_…)        title derived from the first question
+  └─ Turn (turn_…)           pending | complete | error
+       ├─ human Message (msg_…)
+       └─ ai    Message (msg_…)   + meta: tools called, KB citations, escalated
+```
+Only `complete` turns become conversation context, so a failed or stopped
+exchange never poisons the next question. The tables are owned by the API and
+created at startup (`app/db/migrations.py`) rather than living in
+`_DB/schema.sql`, which `_DB/build.sh` drops and rebuilds.
+
+#### Streaming contract
+`POST …/messages/stream` returns `text/event-stream`:
+
+| Event | Payload | Notes |
+|---|---|---|
+| `start` | `{conversationId, title, turnId, humanMessageId, aiMessageId}` | ids are known before generation begins |
+| `delta` | `{text}` | zero or more; append in order |
+| `meta` | `{meta: {tools, citations, escalated}}` | once, before `done` |
+| `done` | `{turnId, status, aiMessageId}` | terminal, on success |
+| `error` | `{code, message, requestId}` | terminal, instead of `done` |
+
+The turn is persisted whatever happens. If the client disconnects (the UI's
+Stop button) or generation raises, the partial text is kept and the turn is
+marked `error` with a reason, so Retry works and nothing is silently lost.
 
 ### Key business rules enforced
 - **A refund question is never consent.** `POST .../refunds` requires
@@ -199,16 +254,35 @@ The code is DB-agnostic above the engine. Set
 ```
 app/
   core/        config, logging, correlation, security, exceptions, rate_limit, pagination
-  db/          async engine/session (FK pragma per connection)
+  db/          async engine/session (FK pragma per connection) + chat-table DDL
   schemas/     Pydantic v2 request/response models
   repositories/ parameterized SQL only (SQLAlchemy 2.0 async)
   services/    business logic + policy enforcement + idempotency
+               chat_responder.py  <- PLACEHOLDER the agent replaces
+               chat_stream.py     <- SSE transport for a chat turn
   api/         deps (DI, auth, ownership) + v1 routers
   main.py      app factory (middleware, exception handlers, routers)
+frontend/      React + TypeScript chat UI (see frontend/README.md)
 tests/         pytest (ASGI transport, per-test DB copy)
 Dockerfile, docker-compose.yml, pyproject.toml, .env.example
 ```
 
 ## 9. Roadmap — Category 2 (next phase)
-The agent orchestration layer (`POST /agent/chat`, LangGraph, KB retrieval,
-execution observability) consumes these Tool APIs. Not included here.
+The agent orchestration layer (LangGraph, KB retrieval, tool calling, execution
+observability) consumes the Tool APIs above. **Not included here.**
+
+It does not need new HTTP endpoints: the chat endpoints already exist and are
+wired to the UI. Swapping in the agent is a one-line change —
+`get_chat_responder` in `app/api/deps.py` currently returns
+`StubChatResponder`; return the harness instead. The contract it must satisfy
+is one method:
+
+```python
+async def respond(self, *, question: str, history: list[ContextMessage],
+                  customer_id: int) -> AsyncIterator[ResponseChunk]:
+    ...   # yield ResponseChunk(text=...) repeatedly, then ResponseChunk(meta=...)
+```
+
+Prior turns are already assembled and passed in as `history`; persistence,
+streaming, cancellation and error handling are already built and tested around
+it. See the module docstring in `app/services/chat_responder.py`.

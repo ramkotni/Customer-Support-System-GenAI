@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     # Rate limiting
     rate_limit_per_minute: int = 120
 
+    # CORS — comma-separated origins allowed to call the API from a browser.
+    # Defaults cover the Vite dev server; empty string disables CORS entirely.
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    # Chat / conversations
+    conversation_title_max_length: int = 200
+
     # External dependency resilience
     http_timeout_seconds: float = 10.0
     http_max_retries: int = 2
@@ -68,6 +75,10 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.effective_database_url.startswith("sqlite")
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     def api_key_map(self) -> dict[str, str]:
         """Return {key -> principal_name} for all configured API keys."""

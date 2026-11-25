@@ -580,3 +580,24 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
   .empty__title { font-size: 22px; }
 }
+
+/* ------------------------- loading / error states ------------------------ */
+
+.chat__loading,
+.sidebar__error {
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.chat__loading {
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 28px 16px;
+  text-align: center;
+}
+
+.sidebar__error {
+  padding: 8px;
+  color: var(--danger);
+  line-height: 1.5;
+}

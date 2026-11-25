@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -75,10 +76,14 @@ class UpstreamError(AppError):
 
 
 def _json(status_code: int, code: str, message: str, details: Any | None = None) -> JSONResponse:
+    # `details` can carry non-JSON values — pydantic validation errors embed the
+    # original exception object in `ctx`, for instance — so encode defensively.
     body = ErrorResponse(
-        error=ErrorBody(code=code, message=message, details=details, request_id=get_request_id())
+        error=ErrorBody(code=code, message=message,
+                        details=jsonable_encoder(details) if details is not None else None,
+                        request_id=get_request_id())
     )
-    return JSONResponse(status_code=status_code, content=body.model_dump())
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(body))
 
 
 def register_exception_handlers(app: FastAPI) -> None:

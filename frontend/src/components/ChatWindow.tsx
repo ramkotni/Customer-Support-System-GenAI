@@ -6,11 +6,19 @@ import { EmptyState } from './EmptyState';
 interface Props {
   conversation: Conversation | undefined;
   isStreaming: boolean;
+  /** A transcript is being fetched and there is nothing to show yet. */
+  loading: boolean;
   onRetry: (turnId: string) => void;
   onPickSuggestion: (text: string) => void;
 }
 
-export function ChatWindow({ conversation, isStreaming, onRetry, onPickSuggestion }: Props) {
+export function ChatWindow({
+  conversation,
+  isStreaming,
+  loading,
+  onRetry,
+  onPickSuggestion,
+}: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
 
@@ -43,7 +51,11 @@ export function ChatWindow({ conversation, isStreaming, onRetry, onPickSuggestio
   if (!conversation) {
     return (
       <div className="chat" ref={scrollRef}>
-        <EmptyState onPick={onPickSuggestion} />
+        {loading ? (
+          <p className="chat__loading">Loading conversation…</p>
+        ) : (
+          <EmptyState onPick={onPickSuggestion} />
+        )}
       </div>
     );
   }

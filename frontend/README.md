@@ -1,74 +1,101 @@
-# Frontend — Phase 1 (UI only, mock data)
+# Frontend — React chat UI
 
-ChatGPT-style chat UI for the Agentic Customer Support System. **No backend
-calls**: every answer comes from a local mock that fakes latency and token
-streaming. Phase 2 adds the remaining APIs; Phase 3 adds the agent harness.
+ChatGPT-style support chat for the Agentic Customer Support System. It talks to
+the FastAPI backend in `../app`: conversations, turns and messages are **stored
+server-side**, and answers **stream in over SSE**.
 
 React 18 + TypeScript + Vite. Plain CSS, no UI framework, no state library —
 one reducer and one hook.
 
+## Run it
+
+The backend must be running first:
+
 ```bash
+# terminal 1 — API on :8000
+cd ..
+uv run uvicorn app.main:app --reload
+
+# terminal 2 — UI on :5173
 cd frontend
 npm install
-npm run dev        # http://localhost:5173
+npm run dev
+```
+
+Open <http://localhost:5173>. Vite proxies `/api` to `127.0.0.1:8000`, so there
+is no CORS setup in development.
+
+```bash
 npm run build      # typecheck + production bundle into dist/
 npm run typecheck
 ```
+
+### Configuration
+
+Defaults work out of the box. To change them, copy `.env.example` to
+`.env.local`:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_API_BASE` | `/api/v1` | Relative, so it goes through the dev proxy |
+| `VITE_API_KEY` | `dev-public-key` | Sent as `X-API-Key` |
+| `VITE_CUSTOMER_ID` | `1` | Sent as `X-Customer-Id` |
+
+There is no sign-in screen in this phase: the customer id is configuration.
+The backend scopes every conversation to it and rejects access to anyone
+else's, so a real login slots in at `src/api/config.ts`.
 
 ## What's implemented
 
 | Requirement | Where |
 |---|---|
-| Sidebar with conversation history, grouped by recency | `src/components/Sidebar.tsx` |
-| Prompt bar (Enter sends, Shift+Enter newline, auto-grow, stop button) | `src/components/PromptBar.tsx` |
+| Sidebar history, grouped by recency, from `GET /conversations` | `src/components/Sidebar.tsx` |
+| Prompt bar (Enter sends, Shift+Enter newline, auto-grow, Stop) | `src/components/PromptBar.tsx` |
 | Multi-turn chat window, follows the stream unless you scroll up | `src/components/ChatWindow.tsx` |
-| Unique Conversation ID / Turn ID / Message ID | `src/lib/ids.ts` |
-| Title auto-generated from the first question | `src/lib/title.ts` |
-| Prior turns retained and shaped for the agent | `buildHistory` in `src/state/reducer.ts` |
-| Mock agent with streaming, abort and retry | `src/mock/agentClient.ts` |
+| Streamed answers over SSE | `src/api/sse.ts`, `src/api/conversations.ts` |
+| Server-side conversation / turn / message ids | the backend; see `src/types.ts` |
+| Per-turn error + Retry (drops the turn server-side, re-asks) | `src/state/useChat.ts` |
 
 Also: new/select/rename (double-click a sidebar item)/delete conversation,
-per-turn error + retry, light & dark themes, mobile layout, history persisted
-to `localStorage` (best-effort — the app works fine without it).
+light & dark themes, mobile layout, markdown answers (tables, lists, bold,
+inline code) rendered to React elements rather than `innerHTML`.
 
 Out of scope by design: **document/file uploads**.
 
-## Data model
+## Architecture
 
 ```
-Conversation { id, title, createdAt, updatedAt, turns[] }
-  └─ Turn { id, status: pending|complete|error, human: Message, ai: Message|null }
-       └─ Message { id, role: human|ai, content, createdAt, meta? }
+components/     presentational; no data fetching
+state/
+  reducer.ts    pure state transitions
+  useChat.ts    orchestration: fetch, stream, optimistic turn, reconcile
+api/
+  config.ts     base URL + auth headers
+  client.ts     fetch wrapper; parses the error envelope into ApiError
+  sse.ts        SSE frame reader for fetch response bodies
+  conversations.ts  typed endpoint calls + streamAnswer()
+lib/            markdown renderer, date formatting
 ```
 
-`Turn.ai` is `null` while the agent is answering, which is what drives the
-typing indicator. `Message.meta` carries what the agent used — tool APIs
-called, KB articles cited, whether it escalated — rendered as chips under the
-answer. The mock populates it so the real agent has somewhere to put it.
+The server owns the transcript. A question is appended optimistically so typing
+feels instant, then the `start` frame swaps in the real ids, and once the turn
+settles the conversation is refetched so stored ids, timestamps and any partial
+text are authoritative.
 
-## Wiring up Phases 2 and 3
+Two details worth knowing if you touch this:
 
-There is exactly one seam: **`askAgent` in `src/mock/agentClient.ts`**. It takes
-an `AgentRequest` and yields `{ delta?, meta? }` chunks. Replace its body with a
-fetch against the harness and nothing else in the app changes — the UI already
-builds the full request, including prior turns as `history`:
+- **`EventSource` is not used.** It cannot issue a POST or send auth headers, so
+  the stream is read off a `fetch` response body (`src/api/sse.ts`). That parser
+  handles frames split across arbitrary network chunk boundaries, including
+  multi-byte UTF-8 split mid-character.
+- **Stop must reject, not resolve.** An aborted stream throws `AbortError` so
+  the UI can tell "stopped" from "finished"; otherwise a cancelled turn would
+  briefly render as complete. The backend independently records the turn as
+  `error` with the partial answer kept, which is what Retry builds on.
 
-```ts
-// src/types.ts
-interface AgentRequest {
-  conversationId: string;
-  question: string;        // the new question
-  messageId: string;
-  history: { role, content, messageId }[];  // prior completed turns, oldest -> newest
-}
-```
+## Phase 3 (the agent)
 
-Notes for whoever does that swap:
-
-- Only **completed** turns enter `history`; a pending or errored turn is not context.
-- The UI already handles abort (`AbortSignal` is passed through), per-chunk
-  appends, and a final chunk carrying `meta` — map SSE/chunked events onto those.
-- `vite.config.ts` proxies `/api` to `http://127.0.0.1:8000`, so calls to
-  `/api/v1/...` reach the FastAPI app in dev with no CORS setup.
-- Server-generated ids should win: when the backend returns real conversation
-  and message ids, use them instead of the client-side ones from `src/lib/ids.ts`.
+Nothing here changes. The UI already sends each question to
+`POST /conversations/{id}/messages/stream` and renders `delta` frames plus the
+tool/citation chips from the `meta` frame. The backend swaps its placeholder
+responder for the agent harness — see the Roadmap in `../README.md`.

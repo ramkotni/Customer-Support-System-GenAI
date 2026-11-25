@@ -9,12 +9,16 @@ export default function App() {
   const chat = useChat();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  const turnCount = chat.activeConversation?.turns.length ?? 0;
+
   return (
     <div className={`app${sidebarOpen ? '' : ' app--narrow'}`}>
       <Sidebar
         conversations={chat.conversations}
         activeId={chat.activeId}
         open={sidebarOpen}
+        loading={chat.loadingList}
+        error={chat.listError}
         onNew={chat.newConversation}
         onSelect={chat.selectConversation}
         onDelete={chat.deleteConversation}
@@ -39,9 +43,7 @@ export default function App() {
             </h1>
             {chat.activeConversation && (
               <p className="topbar__sub">
-                {chat.activeConversation.id} ·{' '}
-                {chat.activeConversation.turns.length} turn
-                {chat.activeConversation.turns.length === 1 ? '' : 's'}
+                {chat.activeConversation.id} · {turnCount} turn{turnCount === 1 ? '' : 's'}
               </p>
             )}
           </div>
@@ -50,6 +52,7 @@ export default function App() {
         <ChatWindow
           conversation={chat.activeConversation}
           isStreaming={chat.isStreaming}
+          loading={chat.loadingConversation}
           onRetry={chat.retry}
           onPickSuggestion={chat.send}
         />
